@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ profile_user.username }}'s Recipes — SugarNote{% endblock %}
+
+
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>{{ profile_user.username }}</h1>
+        <p style="color:var(--muted);margin-top:.35rem;">
+            Member since {{ profile_user.created_at.strftime('%B %Y') }}
+            · {{ recipes|length }} recipe{{ 's' if recipes|length != 1 else '' }}
+        </p>
+    </div>
+    {% if current_user.is_authenticated and current_user.id == profile_user.id %}
+    <a href="{{ url_for('new_recipe') }}" class="btn btn-primary">+ New Recipe</a>
+    {% endif %}
+</div>
+
+{% if recipes %}
+<div class="recipe-grid">
+    {% for recipe in recipes %}
+    <a href="{{ url_for('recipe_detail', recipe_id=recipe.id) }}" class="recipe-card">
+        <div class="card-image">
+            <img src="{{ recipe.image_url if recipe.image_url else url_for('static', filename='images/default-recipe.jpg') }}"
+                alt="{{ recipe.title }}" onerror="this.src='{{ url_for('static', filename='images/default-recipe.jpg') }}'">
+        </div>
+        <div class="card-body">
+            <div class="card-category">{{ recipe.category }}</div>
+            <div class="card-title">{{ recipe.title }}</div>
+            <div class="card-meta">
+                {% if recipe.prep_time or recipe.cook_time %}
+                <span>⏱ {{ (recipe.prep_time or 0) + (recipe.cook_time or 0) }} min</span>
+                {% endif %}
+                {% if recipe.servings %}
+                <span>🍴 {{ recipe.servings }} servings</span>
+                {% endif %}
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty">
+    <h2>No recipes yet</h2>
+    {% if current_user.is_authenticated and current_user.id == profile_user.id %}
+    <p>You haven't posted any recipes yet.</p>
+    <a href="{{ url_for('new_recipe') }}" class="btn btn-primary">+ Add your first recipe</a>
+    {% else %}
+    <p>{{ profile_user.username }} hasn't posted any recipes yet.</p>
+    <a href="{{ url_for('index') }}" class="btn btn-outline">Browse all recipes</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

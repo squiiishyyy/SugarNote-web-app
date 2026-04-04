@@ -1,0 +1,316 @@
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import func
+from datetime import datetime
+import os
+from werkzeug.utils import secure_filename
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///recipes.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['UPLOAD_FOLDER'] = os.path.join('static', 'uploads')
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+favorites = db.Table('favorites',
+    db.Column('user_id',   db.Integer, db.ForeignKey('user.id'),   primary_key=True),
+    db.Column('recipe_id', db.Integer, db.ForeignKey('recipe.id'), primary_key=True)
+)
+
+ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# ─── Model ────────────────────────────────────────────────────────────────────
+
+class User(db.Model):
+    id            = db.Column(db.Integer, primary_key=True)
+    username      = db.Column(db.String(80), unique=True, nullable=False)
+    email         = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    recipes       = db.relationship('Recipe', backref='author', lazy=True)
+    favorited_recipes = db.relationship('Recipe', secondary=favorites, lazy='dynamic')
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    def is_active(self): return True
+    def is_authenticated(self): return True
+    def is_anonymous(self): return False
+    def get_id(self): return str(self.id)
+
+
+class Recipe(db.Model):
+    id            = db.Column(db.Integer, primary_key=True)
+    title         = db.Column(db.String(200), nullable=False)
+    description   = db.Column(db.Text)
+    ingredients   = db.Column(db.Text, nullable=False)   # newline-separated
+    instructions  = db.Column(db.Text, nullable=False)   # newline-separated steps
+    category      = db.Column(db.String(50), default='Other')
+    prep_time     = db.Column(db.Integer)                # minutes
+    cook_time     = db.Column(db.Integer)                # minutes
+    servings      = db.Column(db.Integer)
+    image_url     = db.Column(db.String(500))
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at    = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    @property
+    def ingredients_list(self):
+        return [i.strip() for i in self.ingredients.split('\n') if i.strip()]
+
+    @property
+    def instructions_list(self):
+        return [s.strip() for s in self.instructions.split('\n') if s.strip()]
+
+
+# ─── Routes ───────────────────────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    # Read all filter params from the URL
+    query       = request.args.get('q', '').strip()
+    category    = request.args.get('category', '')
+    ingredient  = request.args.get('ingredient', '').strip()
+    max_time    = request.args.get('max_time', '')
+    max_serving = request.args.get('max_servings', '')
+
+    # THIS LINE MUST COME BEFORE ANY FILTERS
+    recipes_query = Recipe.query
+
+    # Filter by title
+    if query:
+        recipes_query = recipes_query.filter(Recipe.title.ilike(f'%{query}%'))
+
+    # Filter by category
+    if category:
+        recipes_query = recipes_query.filter_by(category=category)
+
+    # Filter by multiple ingredients (comma-separated, must match ALL)
+    ingredient_terms = [t.strip() for t in ingredient.split(',') if t.strip()]
+    for term in ingredient_terms:
+        recipes_query = recipes_query.filter(
+            Recipe.ingredients.ilike(f'%{term}%')
+        )
+
+    # Filter by total cooking time (prep + cook), treating NULL as 0
+    if max_time:
+        total_time = (
+            func.coalesce(Recipe.prep_time, 0) +
+            func.coalesce(Recipe.cook_time, 0)
+        )
+        recipes_query = recipes_query.filter(total_time <= int(max_time))
+
+    # Filter by max servings
+    if max_serving:
+        recipes_query = recipes_query.filter(
+            Recipe.servings <= int(max_serving)
+        )
+
+    recipes    = recipes_query.order_by(Recipe.created_at.desc()).all()
+    categories = [c[0] for c in db.session.query(Recipe.category).distinct().all()]
+
+    any_filter = any([query, category, ingredient, max_time, max_serving])
+
+    return render_template('index.html',
+                           recipes=recipes,
+                           categories=categories,
+                           query=query,
+                           selected_category=category,
+                           ingredient=ingredient,
+                           max_time=max_time,
+                           max_servings=max_serving,
+                           any_filter=any_filter)
+
+
+@app.route('/recipe/<int:recipe_id>')
+def recipe_detail(recipe_id):
+    recipe = Recipe.query.get_or_404(recipe_id)
+    return render_template('recipe_detail.html', recipe=recipe)
+
+
+@app.route('/recipe/new', methods=['GET', 'POST'])
+@login_required
+def new_recipe():
+    if request.method == 'POST':
+        image_url = ''
+        file = request.files.get('image')
+        if file and file.filename and allowed_file(file.filename):
+            filename  = secure_filename(file.filename)
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+            image_url = url_for('static', filename=f'uploads/{filename}')
+
+        recipe = Recipe(
+            title        = request.form.get('title', '').strip(),
+            description  = request.form.get('description', '').strip(),
+            ingredients  = request.form.get('ingredients', '').strip(),
+            instructions = request.form.get('instructions', '').strip(),
+            category     = request.form.get('category', 'Other'),
+            prep_time    = int(request.form.get('prep_time') or 0),
+            cook_time    = int(request.form.get('cook_time') or 0),
+            servings     = int(request.form.get('servings') or 1),
+            image_url    = image_url,
+            user_id      = current_user.id,
+        )
+        db.session.add(recipe)
+        db.session.commit()
+        flash('Recipe created!', 'success')
+        return redirect(url_for('recipe_detail', recipe_id=recipe.id))
+
+    return render_template('recipe_form.html', recipe=None)
+
+
+@app.route('/recipe/<int:recipe_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_recipe(recipe_id):
+    recipe = Recipe.query.get_or_404(recipe_id)
+    if recipe.user_id != current_user.id:
+        flash('You can only edit your own recipes.', 'error')
+        return redirect(url_for('recipe_detail', recipe_id=recipe.id))
+
+    if request.method == 'POST':
+        file = request.files.get('image')
+        if file and file.filename and allowed_file(file.filename):
+            filename         = secure_filename(file.filename)
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+            recipe.image_url = url_for('static', filename=f'uploads/{filename}')
+
+        recipe.title        = request.form.get('title', '').strip()
+        recipe.description  = request.form.get('description', '').strip()
+        recipe.ingredients  = request.form.get('ingredients', '').strip()
+        recipe.instructions = request.form.get('instructions', '').strip()
+        recipe.category     = request.form.get('category', 'Other')
+        recipe.prep_time    = int(request.form.get('prep_time') or 0)
+        recipe.cook_time    = int(request.form.get('cook_time') or 0)
+        recipe.servings     = int(request.form.get('servings') or 1)
+        recipe.updated_at   = datetime.utcnow()
+        db.session.commit()
+        flash('Recipe updated!', 'success')
+        return redirect(url_for('recipe_detail', recipe_id=recipe.id))
+
+    return render_template('recipe_form.html', recipe=recipe)
+
+
+@app.route('/recipe/<int:recipe_id>/delete', methods=['POST'])
+@login_required
+def delete_recipe(recipe_id):
+    recipe = Recipe.query.get_or_404(recipe_id)
+    if recipe.user_id != current_user.id:
+        flash('You can only delete your own recipes.', 'error')
+        return redirect(url_for('recipe_detail', recipe_id=recipe.id))
+    db.session.delete(recipe)
+    db.session.commit()
+    flash('Recipe deleted.', 'info')
+    return redirect(url_for('index'))
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        email    = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        if User.query.filter_by(username=username).first():
+            flash('Username already taken.', 'error')
+        elif User.query.filter_by(email=email).first():
+            flash('Email already registered.', 'error')
+        else:
+            user = User(username=username, email=email)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+            login_user(user)
+            flash('Account created! Welcome!', 'success')
+            return redirect(url_for('index'))
+    return render_template('register.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        user = User.query.filter_by(username=username).first()
+        if user and user.check_password(password):
+            login_user(user)
+            return redirect(request.args.get('next') or url_for('index'))
+        flash('Invalid username or password.', 'error')
+    return render_template('login.html')
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('index'))
+
+@app.route('/recipe/<int:recipe_id>/favorite', methods=['POST'])
+@login_required
+def toggle_favorite(recipe_id):
+    recipe = Recipe.query.get_or_404(recipe_id)
+    if recipe in current_user.favorited_recipes:
+        current_user.favorited_recipes.remove(recipe)
+        flash('Removed from favorites.', 'info')
+    else:
+        current_user.favorited_recipes.append(recipe)
+        flash('Added to favorites!', 'success')
+    db.session.commit()
+    return redirect(url_for('recipe_detail', recipe_id=recipe.id))
+
+
+@app.route('/favorites')
+@login_required
+def favorites_page():
+    recipes = current_user.favorited_recipes.all()
+    return render_template('favorites.html', recipes=recipes)
+
+@app.route('/user/<username>')
+def user_profile(username):
+    user    = User.query.filter_by(username=username).first_or_404()
+    recipes = Recipe.query.filter_by(user_id=user.id).order_by(Recipe.created_at.desc()).all()
+    return render_template('profile.html', profile_user=user, recipes=recipes)
+
+
+# ─── API (bonus) ──────────────────────────────────────────────────────────────
+
+@app.route('/api/recipes')
+def api_recipes():
+    recipes = Recipe.query.order_by(Recipe.created_at.desc()).all()
+    return jsonify([{
+        'id':        r.id,
+        'title':     r.title,
+        'category':  r.category,
+        'prep_time': r.prep_time,
+        'cook_time': r.cook_time,
+        'servings':  r.servings,
+        'image_url': r.image_url,
+    } for r in recipes])
+
+
+# ─── Init ─────────────────────────────────────────────────────────────────────
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)

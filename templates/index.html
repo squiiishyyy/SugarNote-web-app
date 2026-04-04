@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Recipes — SugarNote{% endblock %}
+{% block extra_styles %}
+<style>
+  .hero-img {
+  position: absolute;
+  right: 2rem;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 160px;
+  width: auto;
+  opacity: .85;
+  margin-right:60px;
+}
+  </style>
+  {% endblock %}
+
+{% block content %}
+ 
+{% if not any_filter %}
+<div class="hero">
+  <img src="{{ url_for('static', filename='images/hero-img.png') }}" alt="" class="hero-img">
+  <h1>Your recipe collection,<br><em>beautifully organized.</em></h1>
+  <p>Search, save and cook with confidence.</p>
+</div>
+{% endif %}
+ 
+<!-- Search & Filters -->
+<form method="GET" action="{{ url_for('index') }}" class="search-bar">
+ 
+  <!-- Title search -->
+  <input type="text" name="q" placeholder="Search by title…" value="{{ query }}">
+ 
+  <!-- Ingredient keyword -->
+  <input type="text" name="ingredient" placeholder="Ingredients: chicken, garlic…" value="{{ ingredient }}">
+ 
+  <!-- Category -->
+  <select name="category">
+    <option value="">All categories</option>
+    {% for cat in categories %}
+      <option value="{{ cat }}" {% if cat == selected_category %}selected{% endif %}>{{ cat }}</option>
+    {% endfor %}
+  </select>
+ 
+  <!-- Max total cooking time -->
+  <select name="max_time">
+    <option value="">Any cook time</option>
+    <option value="15"  {% if max_time == '15'  %}selected{% endif %}>Under 15 min</option>
+    <option value="30"  {% if max_time == '30'  %}selected{% endif %}>Under 30 min</option>
+    <option value="60"  {% if max_time == '60'  %}selected{% endif %}>Under 1 hour</option>
+    <option value="120" {% if max_time == '120' %}selected{% endif %}>Under 2 hours</option>
+  </select>
+ 
+  <!-- Max servings -->
+  <select name="max_servings">
+    <option value="">Any servings</option>
+    <option value="1" {% if max_servings == '1' %}selected{% endif %}>1 serving</option>
+    <option value="2" {% if max_servings == '2' %}selected{% endif %}>Up to 2</option>
+    <option value="4" {% if max_servings == '4' %}selected{% endif %}>Up to 4</option>
+    <option value="6" {% if max_servings == '6' %}selected{% endif %}>Up to 6</option>
+    <option value="8" {% if max_servings == '8' %}selected{% endif %}>Up to 8</option>
+  </select>
+ 
+  <button type="submit" class="btn btn-primary">Search</button>
+  {% if any_filter %}
+    <a href="{{ url_for('index') }}" class="btn btn-outline">Clear all</a>
+  {% endif %}
+ 
+</form>
+ 
+{% if any_filter %}
+  <p class="results-info">
+    <strong>{{ recipes|length }}</strong> result{{ 's' if recipes|length != 1 else '' }} found
+    {% if query %}· title contains "<strong>{{ query }}</strong>"{% endif %}
+    {% if ingredient %}
+      · contains:
+      {% for term in ingredient.split(',') %}
+        {% if term.strip() %}<strong>{{ term.strip() }}</strong>{% if not loop.last %}, {% endif %}{% endif %}
+      {% endfor %}
+    {% endif %}
+    {% if selected_category %}· category: <strong>{{ selected_category }}</strong>{% endif %}
+    {% if max_time %}· under <strong>{{ max_time }} min</strong>{% endif %}
+    {% if max_servings %}· up to <strong>{{ max_servings }} servings</strong>{% endif %}
+  </p>
+{% endif %}
+ 
+{% if recipes %}
+  <div class="recipe-grid">
+    {% for recipe in recipes %}
+    <a href="{{ url_for('recipe_detail', recipe_id=recipe.id) }}" class="recipe-card">
+      <div class="card-image">
+        <img src="{{ recipe.image_url if recipe.image_url else url_for('static', filename='images/default-recipe.jpg') }}"
+          alt="{{ recipe.title }}" onerror="this.src='{{ url_for('static', filename='images/default-recipe.jpg') }}'">
+      </div>
+      <div class="card-body">
+        <div class="card-category">{{ recipe.category }}</div>
+        <div class="card-title">{{ recipe.title }}</div>
+        <div class="card-meta">
+          {% if recipe.prep_time or recipe.cook_time %}
+            <span>⏱ {{ (recipe.prep_time or 0) + (recipe.cook_time or 0) }} min</span>
+          {% endif %}
+          {% if recipe.servings %}
+            <span>🍴 {{ recipe.servings }} servings</span>
+          {% endif %}
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty">
+    <h2>No recipes found</h2>
+    <p>{% if any_filter %}Try adjusting your filters.{% else %}Add your first recipe to get started!{% endif %}</p>
+    {% if any_filter %}
+      <a href="{{ url_for('index') }}" class="btn btn-outline">Clear filters</a>
+    {% else %}
+      <a href="{{ url_for('new_recipe') }}" class="btn btn-primary">+ Add Recipe</a>
+    {% endif %}
+  </div>
+{% endif %}
+ 
+{% endblock %}
+ 

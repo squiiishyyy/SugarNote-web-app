@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if recipe else 'New' }} Recipe — SugarNote{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .form-card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 2rem;
+    max-width: 760px;
+  }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1rem;
+  }
+
+  @media (max-width: 560px) {
+    .form-row {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .form-hint {
+    font-size: .78rem;
+    color: var(--muted);
+    margin-top: .3rem;
+  }
+
+  .dynamic-list {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+
+  .dynamic-item {
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+  }
+
+  .dynamic-item input {
+    flex: 1;
+  }
+
+  .remove-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: .3rem;
+    border-radius: 3px;
+    transition: color .2s;
+    flex-shrink: 0;
+  }
+
+  .remove-btn:hover {
+    color: var(--accent);
+  }
+
+  .add-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .4rem;
+    margin-top: .5rem;
+    width: 100%;
+    background: none;
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius);
+    padding: .45rem 1rem;
+    font-size: .85rem;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: all .2s;
+  }
+
+  .add-btn:hover {
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+
+  #imagePreview {
+    width: 100%;
+    height: 180px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    object-fit: cover;
+    margin-top: .5rem;
+    display: none;
+  }
+
+  .form-actions {
+    display: flex;
+    gap: .75rem;
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  input[type="file"] {
+    width: 100%;
+    padding: .5rem;
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--white);
+    font-family: 'DM Sans', sans-serif;
+    font-size: .875rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  input[type="file"]:hover {
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <h1>{{ 'Edit Recipe' if recipe else 'New Recipe' }}</h1>
+</div>
+
+<div class="form-card">
+  <form method="POST" id="recipeForm" enctype="multipart/form-data">
+
+    <!-- Title -->
+    <div class="form-group">
+      <label for="title">Recipe Title *</label>
+      <input type="text" id="title" name="title" required placeholder="e.g. Classic Spaghetti Carbonara"
+        value="{{ recipe.title if recipe else '' }}">
+    </div>
+
+    <!-- Description -->
+    <div class="form-group">
+      <label for="description">Short Description</label>
+      <textarea id="description" name="description" rows="2"
+        placeholder="A brief note about this dish…">{{ recipe.description if recipe else '' }}</textarea>
+    </div>
+
+    <!-- Category -->
+    <div class="form-group">
+      <label for="category">Category</label>
+      <select id="category" name="category">
+        {% for cat in ['Breakfast','Main Dish','Appetizer','Dessert','Snack','Drinks','Other'] %}
+        <option value="{{ cat }}" {% if recipe and recipe.category==cat %}selected{% endif %}>{{ cat }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Times & Servings -->
+    <div class="form-row">
+      <div class="form-group">
+        <label for="prep_time">Prep Time (min)</label>
+        <input type="number" id="prep_time" name="prep_time" min="0" value="{{ recipe.prep_time if recipe else '' }}"
+          placeholder="15">
+      </div>
+      <div class="form-group">
+        <label for="cook_time">Cook Time (min)</label>
+        <input type="number" id="cook_time" name="cook_time" min="0" value="{{ recipe.cook_time if recipe else '' }}"
+          placeholder="30">
+      </div>
+      <div class="form-group">
+        <label for="servings">Servings</label>
+        <input type="number" id="servings" name="servings" min="1" value="{{ recipe.servings if recipe else '' }}"
+          placeholder="4">
+      </div>
+    </div>
+
+    <!-- Image upload -->
+    <div class="form-group">
+      <label for="image">Recipe Image</label>
+      <input type="file" id="image" name="image" accept=".jpg,.jpeg,.png,.webp" onchange="previewImage(this)">
+      <p class="form-hint">Accepted formats: JPG, PNG, WEBP — max 16MB</p>
+      {% if recipe and recipe.image_url %}
+      <p class="form-hint" style="margin-top:.5rem;">Current image:</p>
+      <img src="{{ recipe.image_url }}" style="height:60px;border-radius:4px;margin-top:.35rem;display:block;">
+      {% endif %}
+      <img id="imagePreview" alt="Preview">
+    </div>
+
+    <hr class="divider">
+
+    <!-- Ingredients -->
+    <div class="form-group">
+      <label>Ingredients *</label>
+      <p class="form-hint">One ingredient per line (e.g. "2 cups flour")</p>
+      <div class="dynamic-list" id="ingredientsList">
+        {% if recipe %}
+        {% for ing in recipe.ingredients_list %}
+        <div class="dynamic-item">
+          <input type="text" placeholder="e.g. 2 cups flour" value="{{ ing }}">
+          <button type="button" class="remove-btn" onclick="removeItem(this)">✕</button>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="dynamic-item">
+          <input type="text" placeholder="e.g. 2 cups flour">
+          <button type="button" class="remove-btn" onclick="removeItem(this)">✕</button>
+        </div>
+        {% endif %}
+      </div>
+      <button type="button" class="add-btn" onclick="addIngredient()">+ Add Ingredient</button>
+      <textarea name="ingredients" id="ingredientsHidden" style="display:none"></textarea>
+    </div>
+
+    <!-- Instructions -->
+    <div class="form-group">
+      <label>Instructions *</label>
+      <p class="form-hint">One step per line</p>
+      <div class="dynamic-list" id="stepsList">
+        {% if recipe %}
+        {% for step in recipe.instructions_list %}
+        <div class="dynamic-item">
+          <input type="text" placeholder="Describe this step…" value="{{ step }}">
+          <button type="button" class="remove-btn" onclick="removeItem(this)">✕</button>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="dynamic-item">
+          <input type="text" placeholder="Describe this step…">
+          <button type="button" class="remove-btn" onclick="removeItem(this)">✕</button>
+        </div>
+        {% endif %}
+      </div>
+      <button type="button" class="add-btn" onclick="addStep()">+ Add Step</button>
+      <textarea name="instructions" id="instructionsHidden" style="display:none"></textarea>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">
+        {{ 'Save Changes' if recipe else 'Create Recipe' }}
+      </button>
+      <a href="{{ url_for('recipe_detail', recipe_id=recipe.id) if recipe else url_for('index') }}"
+        class="btn btn-outline">Cancel</a>
+    </div>
+
+  </form>
+</div>
+
+<script>
+  function addIngredient() { addItem('ingredientsList', 'e.g. 2 cups flour'); }
+  function addStep() { addItem('stepsList', 'Describe this step…'); }
+
+  function addItem(listId, placeholder) {
+    const list = document.getElementById(listId);
+    const div = document.createElement('div');
+    div.className = 'dynamic-item';
+    div.innerHTML = `
+      <input type="text" placeholder="${placeholder}">
+      <button type="button" class="remove-btn" onclick="removeItem(this)">✕</button>
+    `;
+    list.appendChild(div);
+    div.querySelector('input').focus();
+  }
+
+  function removeItem(btn) {
+    const list = btn.closest('.dynamic-list');
+    if (list.children.length > 1) btn.closest('.dynamic-item').remove();
+  }
+
+  document.getElementById('recipeForm').addEventListener('submit', function () {
+    const collect = (listId, hiddenId) => {
+      const values = [...document.querySelectorAll(`#${listId} input`)]
+        .map(i => i.value.trim()).filter(Boolean).join('\n');
+      document.getElementById(hiddenId).value = values;
+    };
+    collect('ingredientsList', 'ingredientsHidden');
+    collect('stepsList', 'instructionsHidden');
+  });
+
+  function previewImage(input) {
+    const img = document.getElementById('imagePreview');
+    const file = input.files[0];
+    if (file) {
+      img.src = URL.createObjectURL(file);
+      img.style.display = 'block';
+    } else {
+      img.style.display = 'none';
+    }
+  }
+</script>
+
+{% endblock %}
